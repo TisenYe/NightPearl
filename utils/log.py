@@ -2,11 +2,11 @@ import sys
 from loguru import logger
 
 # "DEBUG" "INFO" "ERROR"
-level="DEBUG"
 
+loglevel="DEBUG"
 # 重定向标准输出到日志,即printk内容在日志中也显示
 class StreamToLogger:
-    def __init__(self, level=level):
+    def __init__(self, level=loglevel):
         self.level = level
 
     def write(self, message):
@@ -19,11 +19,12 @@ class StreamToLogger:
 sys.stdout = StreamToLogger(level="INFO")
 sys.stderr = StreamToLogger(level="ERROR")
 
+
 logger.add(
     "runtime_{time}.log", 
     rotation="100 MB",  # 按大小轮转
-    retention="20 days",  # 保留7天
-    level=level,
+    retention="20 days",  # 保留20天
+    level=loglevel,
     enqueue=True,        # 多进程安全
     backtrace=True       # 异常堆栈追踪
 )
