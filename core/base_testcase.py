@@ -1,4 +1,4 @@
-
+import psutil
 class BaseTestCase():
 
     @classmethod
@@ -16,7 +16,9 @@ class BaseTestCase():
 
     def teardown(self):
         """方法级别清理（每个测试方法执行后运行）"""
-        pass
+        #current_process = psutil.Process()
+        #for child in current_process.children(recursive=True):
+        #    child.kill()
 
     @classmethod
     def tearDownClass(cls):

@@ -1,0 +1,2 @@
+#device_life_testcase00 3
+device_lif_testcase01 10

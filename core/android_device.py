@@ -47,16 +47,20 @@ class AndroidDevice:
         while retry > 0:
             try:
                 self.device = client.device(device_name)
+                log.info(self.device)
                 if self.device == None:
                     raise Exception("Device not found")
 
                 self.start_collect_log()
             except Exception as e:
-                log.error(e)
+                log.error("connect failed: " + e)
                 time.sleep(wait_time)
                 retry -= 1
             else:
                 break
+        if (retry <= 0):
+            log.error("Connected to device failed")
+            return None
 
         log.info("Connected to device {}", device_name)
         self.connected = True
@@ -98,7 +102,7 @@ class AndroidDevice:
                     if line:
                         f.write(line + "\n")
         except Exception as e:
-            log.error(f"recordlog thread error: {e}")
+            log.error(f"{log_from} recordlog thread error: {e}")
             self.stop_log_event.set()
 
     def _record_dmesg_history(self, save_log_file):
@@ -108,7 +112,8 @@ class AndroidDevice:
                 with open(save_log_file, 'a') as f:
                     f.write(dmesg_output + "\n")
         except Exception as e:
-            log.error(f"Failed to get dmesg history: {e}")
+            log.error(f"dmesg recordlog thread error: {e}")
+            self.stop_log_event.set()
 
     def _generate_log_filename(self, log_dir):
         safe_device_name = re.sub(r'[^\w\-_.]', '_', self.device_name)
