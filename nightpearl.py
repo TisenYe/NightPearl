@@ -2,16 +2,26 @@ import argparse
 import importlib
 import inspect
 import sys
-from utils import log
 from pathlib import Path
-from utils.config_parser import SingletonConfig
+from utils.config_parser import ConfigManager
+from utils.log import LoggerManager
+from loguru import logger
 import traceback
+from pprint import pprint
+
+global_config = ConfigManager('config.cfg')
+log = LoggerManager()
 
 class TestExecutor:
     def __init__(self, continue_on_error=False):
         self.continue_on_error = continue_on_error
         self.testcases_path = Path(__file__).parent / "testcase"
         sys.path.insert(0, str(self.testcases_path))
+        self.global_config = global_config
+    
+    def pre_run_setup(self, case_name):
+        self.global_config.set_exec_case_name(case_name)
+        #pprint(log.__dict__)
 
     def load_testcase(self, case_name):
         try:
@@ -30,12 +40,14 @@ class TestExecutor:
                 if not method in class_methods:
                     raise AttributeError(f"UnitTest class missing required method: {method}")
 
+            self.pre_run_setup(case_name)
+
             return module
         except Exception as e:
             log.error(f"Load {case_name} failed: {str(e)}")
             raise
 
-    def run_single_case(self, case_module):
+    def run_single_case(self, case_module, case_name):
         methods = ['setup', 'start_run', 'teardown']
         result = {'passed': True, 'errors': []}
 
@@ -47,7 +59,8 @@ class TestExecutor:
                 if hasattr(test_instance, method):
                     func = getattr(test_instance, method)
                     log.debug(f"Executing UnitTest.{method}...")
-                    func()
+                    with log.case_context(case_name):
+                        func()
                 else:
                     raise AttributeError(f"Method {method} not found in UnitTest class")
         except Exception as e:
@@ -64,7 +77,7 @@ class TestExecutor:
         run_file = self.testcases_path / "run.txt"
         if not run_file.exists():
             raise FileNotFoundError("run.txt not found")
-            
+
         with open(run_file) as f:
             return [line.strip() for line in f if line.strip()]
 
@@ -76,8 +89,8 @@ class TestExecutor:
             total_results['total'] += 1
             try:
                 module = self.load_testcase(case)
-                result = self.run_single_case(module)
-                
+                result = self.run_single_case(module, case)
+
                 if result['passed']:
                     total_results['passed'] += 1
                     log.info(f"✅ {case} PASSED")
@@ -88,27 +101,38 @@ class TestExecutor:
                         log.error(f"Error in {error['method']}:\n{error['exception']}")
                     if not self.continue_on_error:
                         break
-                        
             except Exception as e:
-                log.error(f"🛑 Critical error in {case}: {str(e)}")
+                log.error(f"🛑 Critical error in {case}:")
+                logger.exception("An error occurred")
                 if not self.continue_on_error:
                     sys.exit(1)
 
-        print("\nExecution Summary:")
-        print(f"Total cases: {total_results['total']}")
-        print(f"Passed: {total_results['passed']}")
-        print(f"Failed: {total_results['failed']}")
+        log.info(f"Execution Summary:")
+        log.info(f"Total cases: {total_results['total']}")
+        log.info(f"Passed: {total_results['passed']}")
+        log.info(f"Failed: {total_results['failed']}")
 
-config = SingletonConfig('config.cfg')
+def config_log_init(log, config):
+    log.log_dir = config.log.log_dir
+    log.loglevel = config.log.loglevel
+    log.rotation = config.log.rotation
+    log.retention = config.log.retention
+
+
+def config_init():
+    config_log_init(log, global_config)
+    pass
+
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Test Case Executor')
     parser.add_argument('cases', nargs='*', help='Specific testcase files to run')
     parser.add_argument('--continue', dest='continue_on_error', 
                       action='store_true', help='Continue on failure')
-    
+
     args = parser.parse_args()
 
+    config_init()
 
     specified_cases = [c.replace('.py', '') for c in args.cases]
     

@@ -1,19 +1,22 @@
 import time
-from utils import log
 import threading
 import os
+import sys
 import re
 from datetime import datetime
 from adbutils import AdbClient
+from nightpearl import global_config
+from nightpearl import log
 
 class AndroidDevice:
-    def __init__(self, device_name=None, device_type=None):
-        self.device_type = device_type
-        self.device_name = device_name
-        self.status = "offline"
+    def __init__(self, device_name=None, log_dir=None):
+        self.global_config = global_config
+        self.host = self.global_config.device.host
+        self.port = self.global_config.device.port
+        self.log_dir = self.global_config.log.log_dir
+        self.device_name =  self.global_config.device.device_name
         self.connected = False
         self.device = None
-        self.save_collect_log_dir = "./"
         self.stop_log_event = threading.Event()
 
     def shell(self, cmd, display=True):
@@ -26,7 +29,7 @@ class AndroidDevice:
             log.error("Device not connected, cant run shell command")
         return ret
 
-    def connect(self, device_name=None, host="127.0.0.1", port=5037):
+    def connect(self, device_name=None, host=None, port=None):
         client = AdbClient(host, port)
         retry = 6
         wait_time = 10
@@ -107,10 +110,11 @@ class AndroidDevice:
         except Exception as e:
             log.error(f"Failed to get dmesg history: {e}")
 
-    def _generate_log_filename(self, dir="./"):
+    def _generate_log_filename(self, log_dir):
         safe_device_name = re.sub(r'[^\w\-_.]', '_', self.device_name)
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        log_dir = dir
+        log_dir = os.path.join(log_dir, self.global_config.get_exec_case_name())
+        log.debug(f"generate log dir: {log_dir}")
         os.makedirs(log_dir, exist_ok=True)
         dmesg_file = f"{safe_device_name}_dmesg_{timestamp}.log"
         dmesg_history_file = f"{safe_device_name}_dmesg_history_{timestamp}.log"
@@ -124,7 +128,7 @@ class AndroidDevice:
 
     # TODO 串口日志也需要添加.
     def start_collect_log(self):
-        self._generate_log_filename(self.save_collect_log_dir)
+        self._generate_log_filename(self.log_dir)
         dmesg_thread = threading.Thread(
             target=self._record_log_worker,
             args=(self.dmesg_file, "cat /proc/kmsg")

@@ -29,6 +29,7 @@ def test_connect():
     client.__del__()
 
 clean_log_file()
+assert_that(30).is_equal_to(32)
 
 config = SingletonConfig('config.cfg')
 print(config.log.loglevel)

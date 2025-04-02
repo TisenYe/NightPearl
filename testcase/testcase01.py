@@ -1,18 +1,22 @@
 from core.base_testcase import BaseTestCase
+from core.android_device import AndroidDevice
 from assertpy import assert_that
-from utils import log
+from nightpearl import log
 
 class UnitTest(BaseTestCase):
-    """登录功能测试用例"""
 
     def add(self, a, b):
         return a + b
     
     def start_run(self):
-        # 直接调用核心模块方法
-        print(self.add(1, 30))
-        pass
+        log.error("========= start run ===========")
+        device = AndroidDevice()
+        device.connect()
+        device.shell("uptime")
+        
+        assert_that((self.add(1, 30))).is_equal_to(31)
+        return 0
 
-    def test_failed_login(self):
-        # 测试异常场景
-        pass
+    def teardown(self):
+        
+        return super().teardown()
