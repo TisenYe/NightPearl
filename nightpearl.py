@@ -14,13 +14,14 @@ from pprint import pprint
 global_config = ConfigManager('config.cfg')
 log = LoggerManager()
 
+testcases_path = Path(__file__).parent / "testcase"
 class TestExecutor:
     def __init__(self, continue_on_error=False):
         self.continue_on_error = continue_on_error
-        self.testcases_path = Path(__file__).parent / "testcase"
+        self.testcases_path = testcases_path
         sys.path.insert(0, str(self.testcases_path))
         self.global_config = global_config
-    
+
     def pre_run_setup(self, case_name):
         self.global_config.set_exec_case_name(case_name)
         #pprint(log.__dict__)
@@ -30,20 +31,15 @@ class TestExecutor:
             module_name = ".".join(relative_path.parts + (case_name.rstrip('.py'),))
             module = importlib.import_module(module_name)
             required_methods = ['setup', 'start_run', 'teardown']
-
             if not hasattr(module, 'UnitTest'):
                 raise AttributeError(f"Module {module_name} does not contain UnitTest class")
-
             UnitTestClass = getattr(module, 'UnitTest')
             class_methods = [name for name, _ in inspect.getmembers(UnitTestClass, inspect.isfunction)]
-            log.debug(class_methods)
-
+            #log.debug(class_methods)
             for method in required_methods:
                 if not method in class_methods:
                     raise AttributeError(f"UnitTest class missing required method: {method}")
-
             self.pre_run_setup(case_name)
-
             return module
         except Exception as e:
             log.error(f"Load {case_name} failed: {str(e)}")
@@ -53,24 +49,21 @@ class TestExecutor:
         methods = ['setup', 'start_run', 'teardown']
         result = {'passed': True, 'errors': []}
         teardown_executed = False
-
         try:
             test_class = getattr(case_module, 'UnitTest')
             test_instance = test_class()
-
             while exec_times != 0:
                 for method in methods:
                     if hasattr(test_instance, method):
                         func = getattr(test_instance, method)
-                        log.debug(f"Executing UnitTest.{method}...")
                         with log.case_context(case_name):
+                            log.info(f"========== {case_name} {method} ===========")
                             func()
                     else:
                         raise AttributeError(f"Method {method} not found in UnitTest class")
                     if method == 'teardown':
                         teardown_executed = True
                 exec_times -= 1
-
         except Exception as e:
             result['passed'] = False
             result['errors'].append({
@@ -82,17 +75,10 @@ class TestExecutor:
         finally:
             if not teardown_executed and test_instance and hasattr(test_instance, 'teardown'):
                 try:
+                    log.info(f"========== {case_name} teardown clean ===========")
                     test_instance.teardown()
                 except Exception as e:
                     log.error(f"Teardown failed: {str(e)}")
-            if test_instance:
-                if hasattr(test_instance, '__del__'):
-                    try:
-                        test_instance.__del__()
-                    except Exception as e:
-                        log.error(f"__del__ error: {str(e)}")
-                del test_instance
-            gc.collect()
         return result
 
     # 跳过#开头行, 匹配数字为执行次数,空值默认为1
@@ -118,10 +104,8 @@ class TestExecutor:
                     if not raw_name:
                         continue
                     case_name, exec_times = self.parse_case_name(raw_name)
-
                     if case_name == None or exec_times == 0: 
                         continue
-
                     relative_path = context_dir.relative_to(self.testcases_path)
                     cases.append((relative_path, case_name, exec_times)) 
         return cases
@@ -130,25 +114,20 @@ class TestExecutor:
         run_file = self.testcases_path / "run.txt"
         if not run_file.exists():
             raise FileNotFoundError("run.txt not found")
-
         with open(run_file) as f:
             return [line.strip() for line in f if line.strip()]
 
     def execute(self, specified_cases=None):
-        print(self.get_cases_from_all_dirs())
         if specified_cases != None:
-            cases_to_run = [specified_cases]
+            cases_to_run = specified_cases
         else:
             cases_to_run = self.get_cases_from_all_dirs()
-
         total_results = {'total': 0, 'passed': 0, 'failed': 0}
-
         for relative_path, case, exec_times in cases_to_run:
             total_results['total'] += 1
             try:
                 module = self.load_testcase(case, relative_path)
                 result = self.run_single_case(module, case, exec_times)
-
                 if result['passed']:
                     total_results['passed'] += 1
                     log.info(f"✅ {case} PASSED")
@@ -176,11 +155,28 @@ def config_log_init(log, config):
     log.rotation = config.log.rotation
     log.retention = config.log.retention
 
-
 def config_init():
     config_log_init(log, global_config)
     pass
 
+def parse_case_arguments(args_cases, testcases_base):
+    cases = []
+    i = 0
+    while i < len(args_cases):
+        file_path = args_cases[i]
+        exec_times = int(args_cases[i+1]) if (i+1 < len(args_cases) and args_cases[i+1].isdigit()) else 1
+        i += 2 if (i+1 < len(args_cases) and args_cases[i+1].isdigit()) else 1
+
+        try:
+            abs_path = Path(file_path).resolve(strict=True)
+            rel_path = abs_path.relative_to(testcases_base.resolve()).parent
+            case_name = abs_path.stem
+        except (ValueError, FileNotFoundError) as e:
+            log.error(f"路径错误: {file_path} - {str(e)}")
+            continue
+
+        cases.append((rel_path, case_name, exec_times))
+    return cases
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Test Case Executor')
@@ -192,7 +188,7 @@ if __name__ == "__main__":
 
     config_init()
 
-    specified_cases = [c.replace('.py', '') for c in args.cases]
+    specified_cases = parse_case_arguments(args.cases, testcases_path)
     
     executor = TestExecutor(continue_on_error=args.continue_on_error)
     executor.execute(specified_cases or None)

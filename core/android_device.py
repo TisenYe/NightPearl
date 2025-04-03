@@ -17,7 +17,28 @@ class AndroidDevice:
         self.device_name =  self.global_config.device.device_name
         self.connected = False
         self.device = None
-        self.stop_log_event = threading.Event()
+        self.heartbeat_interval = 3  # 心跳间隔秒数
+        self.heartbeat_thread = None
+        self.heartbeat_living = threading.Event()
+
+    def _heartbeat_checker(self):
+        retry = 3
+        while not self.heartbeat_living.is_set():
+            try:
+                if self.device and self.device.get_state() == "device":
+                    time.sleep(self.heartbeat_interval)
+                    break
+                else:
+                    retry -= 1
+                    continue
+            except Exception as e:
+                retry -= 1
+                log.warn(f"{self.device_name} device heartbeat lost ({retry}): {str(e)}")
+            if retry == 0:
+                self.heartbeat_living.set()
+                self.connected = False
+                log.error(f"{self.device_name} device not living")
+                break
 
     def shell(self, cmd, display=True):
         ret = -1
@@ -33,37 +54,36 @@ class AndroidDevice:
         client = AdbClient(host, port)
         retry = 6
         wait_time = 10
-
+        device_name = device_name or self.device_name
         if device_name == None:
-            if self.device_name != None:
-                device_name = self.device_name
-            else:
-                log.error("Need device name to conect")
+                log.warn("Need device name to conect")
                 return -1
-        if self.device_name == None:
-            self.device_name = device_name
 
-        log.info("start connect {}", device_name)
+        log.info("Start connect to device {}", device_name)
         while retry > 0:
             try:
                 self.device = client.device(device_name)
-                log.info(self.device)
-                if self.device == None:
+                self.device.root()
+                if self.device.get_state() == "device":
+                    break
+                else:
                     raise Exception("Device not found")
-
-                self.start_collect_log()
             except Exception as e:
-                log.error("connect failed: " + e)
                 time.sleep(wait_time)
                 retry -= 1
-            else:
-                break
         if (retry <= 0):
             log.error("Connected to device failed")
             return None
 
         log.info("Connected to device {}", device_name)
+        self.start_collect_log()
         self.connected = True
+        self.heartbeat_thread = threading.Thread(
+            target=self._heartbeat_checker,
+            name="DeviceHeartbeat",
+            daemon=True
+        )
+        self.heartbeat_thread.start()
         return self.device
 
     # 注意:重启之后是新的连接对象
@@ -97,13 +117,13 @@ class AndroidDevice:
             with open(save_log_file, 'a', buffering=100) as f:
                 stream = self.device.shell(log_from, stream=True)
                 output = stream.conn.makefile()
-                while not self.stop_log_event.is_set():
+                while not self.heartbeat_living.is_set():
                     line = output.readline().strip()
                     if line:
                         f.write(line + "\n")
         except Exception as e:
             log.error(f"{log_from} recordlog thread error: {e}")
-            self.stop_log_event.set()
+            self.heartbeat_living.set()
 
     def _record_dmesg_history(self, save_log_file):
         try:
@@ -113,23 +133,21 @@ class AndroidDevice:
                     f.write(dmesg_output + "\n")
         except Exception as e:
             log.error(f"dmesg recordlog thread error: {e}")
-            self.stop_log_event.set()
+            self.heartbeat_living.set()
 
     def _generate_log_filename(self, log_dir):
         safe_device_name = re.sub(r'[^\w\-_.]', '_', self.device_name)
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         log_dir = os.path.join(log_dir, self.global_config.get_exec_case_name())
-        log.debug(f"generate log dir: {log_dir}")
         os.makedirs(log_dir, exist_ok=True)
+
+        logcat_file = f"{safe_device_name}_logcat_{timestamp}.log"
         dmesg_file = f"{safe_device_name}_dmesg_{timestamp}.log"
         dmesg_history_file = f"{safe_device_name}_dmesg_history_{timestamp}.log"
-        logcat_file = f"{safe_device_name}_logcat_{timestamp}.log"
+
+        self.logcat_file = os.path.join(log_dir, logcat_file)
         self.dmesg_file = os.path.join(log_dir, dmesg_file)
         self.dmesg_history_file = os.path.join(log_dir, dmesg_history_file)
-        self.logcat_file = os.path.join(log_dir, logcat_file)
-        log.debug(self.dmesg_file)
-        log.debug(self.dmesg_history_file)
-        log.debug(self.logcat_file)
 
     # TODO 串口日志也需要添加.
     def start_collect_log(self):
@@ -146,15 +164,6 @@ class AndroidDevice:
         dmesg_thread.start()
         self._record_dmesg_history(self.dmesg_history_file)
 
-        def _event_loop():
-            try:
-                while not self.stop_log_event.is_set():
-                    time.sleep(0.5)
-            except KeyboardInterrupt:
-                self.stop_log_event.set()
-        event_thread = threading.Thread(target=_event_loop, daemon=True)
-        event_thread.start()
-
     def __del__(self):
-         if not self.stop_log_event.is_set():
-            self.stop_log_event.set()
+         if not self.heartbeat_living.is_set():
+            self.heartbeat_living.set()

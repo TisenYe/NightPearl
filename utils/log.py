@@ -42,6 +42,7 @@ class LoggerManager:
         os.makedirs(case_log_dir, exist_ok=True)
         self._file_handler_id = logger.add(
             f"{case_log_dir}/runtime.log",
+            format="<green>{time:YYYY-MM-DD HH:mm:ss}</green> | <level>{level: <8}</level> | <cyan>{file}:{line}</cyan> - {message}",
             rotation=self.rotation,
             retention=self.retention,
             level=self.loglevel,
@@ -61,7 +62,8 @@ class LoggerManager:
                 self.level = level
             def write(self, message):
                 if message.strip():
-                    logger.log(self.level, message.strip())
+                    # depth输出调用文件名和行号的层级关系
+                    logger.opt(depth=3).log(self.level, message.strip())
             def flush(self): pass
         return StreamRedirector(level)
 
@@ -80,12 +82,17 @@ class LoggerManager:
 
     @staticmethod
     def debug(*args):
-        logger.debug(*args)
+        # depth输出调用文件名和行号的层级关系
+        logger.opt(depth=2).debug(*args)
 
     @staticmethod
     def info(*args):
-        logger.info(*args)
+        logger.opt(depth=2).info(*args)
+
+    @staticmethod
+    def warn(*args):
+        logger.opt(depth=2).warning(*args)
 
     @staticmethod 
     def error(*args):
-        logger.error(*args)
+        logger.opt(depth=2).error(*args)
